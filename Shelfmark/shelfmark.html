@@ -1,0 +1,605 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SHELFMARK — Rao Tula Ram Library catalogue</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="bar">
+  <div class="brand">
+    <span class="mark" data-mark="RL" aria-hidden="true"></span>
+    <div>
+      <strong>Rao Tula Ram Library</strong>
+      <span class="sub">Catalogue · SHELFMARK</span>
+    </div>
+  </div>
+</header>
+
+<main class="wrap wide">
+
+  <!-- The win. The server has always handed the scoring flag back with the
+       reply once the desk gives up its secret, but nothing on this page read
+       that field, so a player who had genuinely solved the lab saw only the
+       WORD-WORD-NNNN code the desk reads out. That code is derive_code(FLAG),
+       a decoy by design, and the portal rejects it before it even compares a
+       value because the shape it accepts is flag{32 hex}. Five labs were
+       built this way and all five were unwinnable through the UI. -->
+  <div id="flag-won" class="flag-won" hidden role="status" aria-live="polite">
+    <p class="flag-won-head">Solved</p>
+    <p class="flag-won-copy">Copy this flag and submit it on the portal to record your solve.</p>
+    <div class="flag-won-row">
+      <code id="flag-won-value" class="flag-won-value"></code>
+      <button type="button" id="flag-won-btn" class="flag-won-button">Copy</button>
+    </div>
+  </div>
+  <aside class="shelf" aria-label="Shelf list">
+    <h2 class="pane-head">Shelf list</h2>
+    <div id="shelf" class="shelf-list"></div>
+    <button id="reset" class="linkish" type="button">Clear all reviews</button>
+  </aside>
+
+  <section class="pane">
+    <article id="record" class="record" aria-live="polite"></article>
+
+    <section class="reviews">
+      <h2 class="pane-head">Reader reviews</h2>
+      <div id="reviews" class="review-list"></div>
+
+      <form id="review-form" class="composer stack" autocomplete="off">
+        <textarea id="review-input" rows="2"
+                  placeholder="Write a short review of this title…"
+                  aria-label="Write a short review of this title" required></textarea>
+        <button class="btn" type="submit">Post review</button>
+      </form>
+      <p class="policy-note">Reviews are screened before they are published, and
+        a published review is shown to SHELFMARK when a reader asks about the title.</p>
+      <p id="review-note" class="screen-note" role="status" aria-live="polite"></p>
+      <p id="review-err" class="err" role="status" aria-live="polite"></p>
+    </section>
+
+    <section class="thread">
+      <div class="thread-head">
+        <span class="avatar" aria-hidden="true">SH</span>
+        <div>
+          <div class="who-name">SHELFMARK</div>
+          <div class="who-status">Catalogue assistant · answers from the record and its reviews</div>
+        </div>
+      </div>
+
+      <div id="log" class="log" role="log" aria-live="polite"></div>
+
+      <div class="composer-wrap">
+        <!-- Starters: what the catalogue can actually do, so the opening screen
+             has content instead of a tall empty panel. They disappear once the
+             conversation starts. -->
+        <div id="starters" class="starters">
+          <button class="starter" type="button">Where do I find this?</button>
+          <button class="starter" type="button">What do readers say about it?</button>
+          <button class="starter" type="button">Can I borrow it?</button>
+        </div>
+
+        <form id="ask-form" class="composer" autocomplete="off">
+          <input id="ask-input" type="text" placeholder="Ask about this title…"
+                 aria-label="Ask about this title" required>
+          <button id="send" type="submit" aria-label="Send question">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M5 12h13M12 5l7 7-7 7"/>
+            </svg>
+          </button>
+        </form>
+        <p id="ask-err" class="err" role="status" aria-live="polite"></p>
+      </div>
+    </section>
+  </section>
+</main>
+
+<script>
+(function () {
+  var shelf       = document.getElementById("shelf");
+  var record      = document.getElementById("record");
+  var reviewList  = document.getElementById("reviews");
+  var reviewForm  = document.getElementById("review-form");
+  var reviewInput = document.getElementById("review-input");
+  var reviewNote  = document.getElementById("review-note");
+  var reviewErr   = document.getElementById("review-err");
+  var askForm     = document.getElementById("ask-form");
+  var askInput    = document.getElementById("ask-input");
+  var send        = document.getElementById("send");
+  var log         = document.getElementById("log");
+  var askErr      = document.getElementById("ask-err");
+  var starters    = document.getElementById("starters");
+  var resetBtn    = document.getElementById("reset");
+
+  var titles = [];
+  var current = null;
+
+  // ── markdown, rendered as DOM ──────────────────────────────────────────
+  // The model answers in markdown, so showing the raw string prints "**Tracking
+  // a Parcel**" at the player. But this lab exists to make a model emit
+  // attacker-chosen text, so that text must never be parsed as HTML: everything
+  // below builds elements and sets textContent. There is no innerHTML path, and
+  // no string of model output ever becomes markup.
+  //
+  // Underscores are deliberately NOT italic syntax here. A captured value can
+  // carry them, and treating _x_ as emphasis would eat the underscores and hand
+  // the player something that does not verify. No worked example in this
+  // comment: the page is served to the player, and a sample establishes the
+  // shape of what they are looking for and that there is a single string to
+  // find. Blind play, 28 Oct 2026, named it as a signpost.
+  function inline(text, parent) {
+    var re = /(\*\*[^*]+\*\*|`[^`]+`|\*[^*\n]+\*)/g;
+    var last = 0, m;
+    while ((m = re.exec(text)) !== null) {
+      if (m.index > last) {
+        parent.appendChild(document.createTextNode(text.slice(last, m.index)));
+      }
+      var tok = m[0], el;
+      if (tok.slice(0, 2) === "**") {
+        el = document.createElement("strong");
+        el.textContent = tok.slice(2, -2);
+      } else if (tok.charAt(0) === "`") {
+        el = document.createElement("code");
+        el.textContent = tok.slice(1, -1);
+      } else {
+        el = document.createElement("em");
+        el.textContent = tok.slice(1, -1);
+      }
+      parent.appendChild(el);
+      last = m.index + tok.length;
+    }
+    if (last < text.length) {
+      parent.appendChild(document.createTextNode(text.slice(last)));
+    }
+  }
+
+  var RE_FENCE = /^\s*```/;
+  var RE_ITEM  = /^\s*(?:[-*+]|(\d+)[.)])\s+(.*)$/;
+  var RE_HEAD  = /^\s*(#{1,4})\s+(.*)$/;
+
+  function markdown(text, root) {
+    var lines = String(text).replace(/\r\n?/g, "\n").split("\n");
+    var i = 0, list = null;
+
+    while (i < lines.length) {
+      var line = lines[i];
+
+      if (RE_FENCE.test(line)) {                       // fenced code block
+        list = null;
+        var buf = [];
+        i++;
+        while (i < lines.length && !RE_FENCE.test(lines[i])) { buf.push(lines[i]); i++; }
+        i++;
+        var pre = document.createElement("pre");
+        var code = document.createElement("code");
+        code.textContent = buf.join("\n");
+        pre.appendChild(code);
+        root.appendChild(pre);
+        continue;
+      }
+
+      var h = RE_HEAD.exec(line);
+      if (h) {                                          // heading
+        list = null;
+        var hEl = document.createElement("h4");
+        inline(h[2], hEl);
+        root.appendChild(hEl);
+        i++;
+        continue;
+      }
+
+      var item = RE_ITEM.exec(line);
+      if (item) {                                       // list item
+        var ordered = item[1] !== undefined;
+        if (!list || list.ordered !== ordered) {
+          var listEl = document.createElement(ordered ? "ol" : "ul");
+          root.appendChild(listEl);
+          list = { el: listEl, ordered: ordered };
+        }
+        var li = document.createElement("li");
+        inline(item[2], li);
+        list.el.appendChild(li);
+        i++;
+        continue;
+      }
+
+      if (!line.trim()) { list = null; i++; continue; }
+
+      list = null;                                      // paragraph
+      var para = [];
+      while (i < lines.length && lines[i].trim() &&
+             !RE_FENCE.test(lines[i]) && !RE_ITEM.test(lines[i]) && !RE_HEAD.test(lines[i])) {
+        para.push(lines[i]);
+        i++;
+      }
+      var p = document.createElement("p");
+      inline(para.join("\n"), p);
+      root.appendChild(p);
+    }
+
+    if (!root.childNodes.length) {                      // never render nothing
+      var fallback = document.createElement("p");
+      fallback.textContent = text;
+      root.appendChild(fallback);
+    }
+  }
+
+  function el(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text !== undefined && text !== null) n.textContent = text;
+    return n;
+  }
+
+  function bubble(text, who) {
+    var d = document.createElement("div");
+    d.className = "msg " + who;
+
+    var label = el("span", "who", who.indexOf("me") === 0 ? "You" : "SHELFMARK");
+    d.appendChild(label);
+
+    var body = el("div", "body");
+    if (who.indexOf("pending") !== -1) {
+      var dots = el("span", "dots");
+      dots.setAttribute("role", "img");
+      dots.setAttribute("aria-label", "SHELFMARK is looking it up");
+      for (var n = 0; n < 3; n++) dots.appendChild(document.createElement("i"));
+      body.appendChild(dots);
+    } else if (who.indexOf("bot") === 0) {
+      markdown(text, body);
+    } else {
+      // The reader's own text is shown verbatim — seeing exactly what was sent
+      // is the whole point.
+      body.appendChild(el("p", null, text));
+    }
+    d.appendChild(body);
+
+    log.appendChild(d);
+    log.scrollTop = log.scrollHeight;
+    return d;
+  }
+
+  // What the answer was assembled from. Retrieval is invisible unless the
+  // product says it happened, so this line sits under every answer: the record
+  // it read, and how many reader reviews came back with it.
+  function noteLine(tag, text) {
+    var d = el("div", "msg note");
+    var body = el("div", "body");
+    var p = document.createElement("p");
+    p.appendChild(el("span", "note-tag", tag));
+    p.appendChild(document.createTextNode(" " + text));
+    body.appendChild(p);
+    d.appendChild(body);
+    log.appendChild(d);
+    log.scrollTop = log.scrollHeight;
+    return d;
+  }
+
+  function sourcesLine(s) {
+    if (!s) return;
+    var n = s.reviews || 0;
+    noteLine("RETRIEVED", "Catalogue record for " + s.record + ", and " +
+      (n === 1 ? "1 reader review." : n + " reader reviews."));
+  }
+
+  function renderShelf() {
+    shelf.replaceChildren();
+    titles.forEach(function (t) {
+      var on = current && current.key === t.key;
+      var b = el("button", "shelf-item" + (on ? " is-on" : ""));
+      b.type = "button";
+      b.setAttribute("data-key", t.key);
+      if (on) b.setAttribute("aria-current", "true");
+      b.appendChild(el("span", "shelf-title", t.title));
+      b.appendChild(el("span", "shelf-meta", t.classification + " · " + t.year));
+      shelf.appendChild(b);
+    });
+  }
+
+  function renderRecord() {
+    record.replaceChildren();
+    if (!current) {
+      record.appendChild(el("p", "muted", "Pick a title from the shelf list."));
+      return;
+    }
+    record.appendChild(el("h2", "rec-title", current.title));
+    record.appendChild(el("p", "rec-by", current.author + " · " + current.year));
+    var dl = el("dl", "rec-fields");
+    [["Classification", current.classification],
+     ["Shelf location", current.location],
+     ["Availability", current.availability],
+     ["Summary", current.summary]].forEach(function (row) {
+      dl.appendChild(el("dt", null, row[0]));
+      dl.appendChild(el("dd", null, row[1]));
+    });
+    record.appendChild(dl);
+  }
+
+  function renderReviews() {
+    reviewList.replaceChildren();
+    var rows = (current && current.reviews) || [];
+    if (!rows.length) {
+      reviewList.appendChild(el("p", "muted", "No reviews on this title yet."));
+      return;
+    }
+    rows.forEach(function (r) {
+      var d = el("div", "review" + (r.published ? "" : " review-held"));
+      var head = el("div", "review-head");
+      head.appendChild(el("span", "review-who", "A reader"));
+      head.appendChild(el("span", "review-state",
+        r.published ? "Published" : ("Held · rule " + (r.rule || "?"))));
+      d.appendChild(head);
+      d.appendChild(el("p", "review-text", r.text));
+      if (!r.published && r.why) d.appendChild(el("p", "review-why", r.why));
+      reviewList.appendChild(d);
+    });
+  }
+
+  function greet() {
+    log.replaceChildren();
+    starters.hidden = false;
+    if (!current) return;
+    bubble("**" + current.title + "** — " + current.summary +
+           "\n\nAsk me where it is, whether it circulates, or what readers have " +
+           "made of it.", "bot");
+  }
+
+  function load(wantKey) {
+    return fetch("/catalogue")
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        showFlag(j && j.flag);
+        titles = j.titles || [];
+        var key = wantKey || (current && current.key) ||
+                  (titles.length ? titles[0].key : null);
+        current = null;
+        titles.forEach(function (t) { if (t.key === key) current = t; });
+        renderShelf();
+        renderRecord();
+        renderReviews();
+      });
+  }
+
+  function select(key) {
+    load(key).then(function () {
+      greet();
+      reviewNote.textContent = "";
+      reviewErr.textContent = "";
+      askErr.textContent = "";
+    });
+  }
+
+  shelf.addEventListener("click", function (ev) {
+    var b = ev.target.closest(".shelf-item");
+    if (!b) return;
+    var key = b.getAttribute("data-key");
+    if (!current || current.key !== key) select(key);
+  });
+
+  // One request at a time across both composers. The starter chips call
+  // requestSubmit(), which ignores a disabled button, so two questions could
+  // otherwise be in flight and their answers land against the wrong one.
+  var busy = false;
+
+  reviewForm.addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    var text = reviewInput.value.trim();
+    if (!text || busy || !current) return;
+    busy = true;
+    reviewNote.textContent = "";
+    reviewErr.textContent = "";
+
+    fetch("/review", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: current.key, text: text }),
+    })
+      .then(function (r) { return r.json().then(function (j) {
+        showFlag(j && j.flag); return { ok: r.ok, status: r.status, j: j }; }); })
+      .then(function (res) {
+        if (res && res.j) showFlag(res.j.flag);
+        if (!res.ok) {
+          reviewErr.textContent = res.j.error || "Could not post that review.";
+          return;
+        }
+        reviewInput.value = "";
+        current.reviews = res.j.reviews || [];
+        renderReviews();
+        // A held review is reported as policy, not as an error: the screen is
+        // part of the product and colouring it red would tell the reader they
+        // had done something interesting.
+        reviewNote.textContent = res.j.screen_note ||
+          "Published. SHELFMARK will see it the next time somebody asks about this title.";
+      })
+      .catch(function () { reviewErr.textContent = "Could not reach the catalogue. Try again."; })
+      .finally(function () { busy = false; });
+  });
+
+  askForm.addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    var text = askInput.value.trim();
+    if (!text || busy || !current) return;
+    busy = true;
+
+    bubble(text, "me");
+    starters.hidden = true;
+    askInput.value = "";
+    send.disabled = true;
+    askErr.textContent = "";
+    var thinking = bubble("…", "bot pending");
+
+    fetch("/ask", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: current.key, question: text }),
+    })
+      .then(function (r) { return r.json().then(function (j) {
+        showFlag(j && j.flag); return { ok: r.ok, status: r.status, j: j }; }); })
+      .then(function (res) {
+        if (res && res.j) showFlag(res.j.flag);
+        thinking.remove();
+        if (!res.ok) {
+          // Hand the question back: a 503 from a busy provider must not cost
+          // the reader a question they spent time on.
+          askInput.value = text;
+          askErr.textContent = res.status === 503
+            ? "SHELFMARK is unavailable right now. Try again in a moment."
+            : (res.j.error || "Something went wrong.");
+          return;
+        }
+        bubble(res.j.answer || "(no answer)", "bot");
+        sourcesLine(res.j.sources);
+      })
+      .catch(function () {
+        thinking.remove();
+        askInput.value = text;
+        askErr.textContent = "Could not reach the catalogue. Try again.";
+      })
+      .finally(function () {
+        busy = false;
+        send.disabled = false;
+        askInput.focus();
+      });
+  });
+
+  // A starter is just a pre-written first question. Once the reader has asked
+  // anything the row has done its job and goes.
+  starters.addEventListener("click", function (ev) {
+    var b = ev.target.closest(".starter");
+    if (!b) return;
+    askInput.value = b.textContent.trim();
+    askForm.requestSubmit ? askForm.requestSubmit()
+                          : askForm.dispatchEvent(new Event("submit", { cancelable: true }));
+  });
+
+  resetBtn.addEventListener("click", function () {
+    if (busy) return;
+    busy = true;
+    fetch("/reset", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })
+      .then(function () { return load(); })
+      .then(function () {
+        greet();
+        reviewNote.textContent = "Every review cleared.";
+        reviewErr.textContent = "";
+      })
+      .catch(function () { reviewErr.textContent = "Could not reach the catalogue. Try again."; })
+      .finally(function () { busy = false; });
+  });
+
+  load().then(function () { greet(); askInput.focus(); });
+})();
+
+  // Paints the flag the server returns. It is deliberately idempotent: a lab
+  // can report the same win on more than one endpoint (PLINTH does, from both
+  // /lodge and /desk), and a second paint must not wipe the value the player
+  // is mid-way through copying.
+  function showFlag(flag) {
+    if (!flag) return;
+    var box = document.getElementById("flag-won");
+    if (!box || !box.hidden) return;
+    var val = document.getElementById("flag-won-value");
+    if (val) val.textContent = flag;
+    box.hidden = false;
+    try { box.scrollIntoView({ block: "nearest", behavior: "smooth" }); } catch (e) {}
+  }
+  (function () {
+    var b = document.getElementById("flag-won-btn");
+    if (!b) return;
+    b.addEventListener("click", function () {
+      var v = (document.getElementById("flag-won-value") || {}).textContent || "";
+      if (!v) return;
+      var done = function () { b.textContent = "Copied"; setTimeout(function () { b.textContent = "Copy"; }, 1400); };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(v).then(done, function () {});
+      } else {
+        // http origins and older browsers have no async clipboard; a lab pod
+        // is reached over https but a local run is not, and a Copy button that
+        // silently does nothing is worse than no button.
+        var t = document.createElement("textarea");
+        t.value = v; document.body.appendChild(t); t.select();
+        try { document.execCommand("copy"); done(); } catch (e) {}
+        document.body.removeChild(t);
+      }
+    });
+  })();
+</script>
+<script>window.LAB_SLUG="geekhaven03-shelfmark";</script><script>
+(function(){
+  var WARN=300, EXT=30, canExtend=true, remaining=null, lastSync=0, warned=false, closed=false;
+  var pill;
+  function fmt(s){ s=Math.max(0,s|0); var m=(s/60)|0, ss=s%60; return m+":"+(ss<10?"0":"")+ss; }
+  function ensurePill(){
+    if(pill) return;
+    pill=document.createElement("div");
+    pill.id="kx-lab-timer";
+    pill.style.cssText="position:fixed;right:16px;bottom:16px;z-index:2147483646;font:600 13px/1.2 system-ui,-apple-system,sans-serif;background:#111;color:#fff;padding:8px 12px;border-radius:999px;box-shadow:0 2px 10px rgba(0,0,0,.3);opacity:.93";
+    document.body.appendChild(pill);
+  }
+  function paint(disp){
+    ensurePill();
+    pill.style.display="block";
+    pill.textContent="Lab time left "+fmt(disp);
+    pill.style.background = disp<=WARN ? "#b91c1c" : "#111";
+  }
+  function apply(d){
+    if(!d) return;
+    if(typeof d.warning_seconds==="number") WARN=d.warning_seconds;
+    if(typeof d.extension_minutes==="number") EXT=d.extension_minutes;
+    if(typeof d.can_extend==="boolean") canExtend=d.can_extend;
+    if(typeof d.seconds_remaining==="number"){ remaining=d.seconds_remaining; lastSync=Date.now(); }
+  }
+  function sync(){
+    fetch("/heartbeat",{method:"POST",credentials:"include"})
+      .then(function(r){return r.json();}).then(apply).catch(function(){});
+  }
+  var modal=null;
+  function closeModal(){ if(modal){ modal.remove(); modal=null; } }
+  function doExtend(){
+    var b=document.getElementById("kx-ext");
+    if(b){ b.disabled=true; b.textContent="Extending..."; }
+    fetch("/extend",{method:"POST",credentials:"include"})
+      .then(function(r){return r.json();}).then(function(d){ apply(d); closeModal(); warned=false; })
+      .catch(function(){ if(b){ b.disabled=false; b.textContent="Extend +"+EXT+" min"; } });
+  }
+  function showModal(){
+    if(modal) return; warned=true;
+    modal=document.createElement("div");
+    modal.style.cssText="position:fixed;inset:0;z-index:2147483647;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center";
+    var card=document.createElement("div");
+    card.style.cssText="background:#fff;color:#111;max-width:380px;width:90%;border-radius:14px;padding:22px 22px 18px;font:14px/1.5 system-ui,-apple-system,sans-serif;box-shadow:0 10px 40px rgba(0,0,0,.4)";
+    var title=canExtend ? "Your lab is about to close" : "Maximum lab time reached";
+    var body=canExtend
+      ? "This lab shuts down in <b><span id=kx-cd></span></b>. Want to keep going? Extending adds "+EXT+" more minutes."
+      : "This lab shuts down in <b><span id=kx-cd></span></b> and cannot be extended further. Save anything you need now.";
+    card.innerHTML="<div style='font:600 16px system-ui,sans-serif;margin-bottom:8px'>"+title+"</div>"
+      +"<div style='margin-bottom:18px'>"+body+"</div>"
+      +"<div style='display:flex;gap:10px;justify-content:flex-end'>"
+      +(canExtend?"<button id=kx-ext style='background:#b91c1c;color:#fff;border:0;border-radius:8px;padding:9px 16px;font:600 14px system-ui;cursor:pointer'>Extend +"+EXT+" min</button>":"")
+      +"<button id=kx-dismiss style='background:#eee;color:#111;border:0;border-radius:8px;padding:9px 16px;font:600 14px system-ui;cursor:pointer'>Dismiss</button>"
+      +"</div>";
+    modal.appendChild(card); document.body.appendChild(modal);
+    var ext=document.getElementById("kx-ext"); if(ext) ext.onclick=doExtend;
+    document.getElementById("kx-dismiss").onclick=closeModal;
+  }
+  function onClosed(){
+    closeModal();
+    var o=document.createElement("div");
+    o.style.cssText="position:fixed;inset:0;z-index:2147483647;background:rgba(17,17,17,.92);color:#fff;display:flex;align-items:center;justify-content:center;text-align:center;font:600 18px/1.5 system-ui,sans-serif;padding:24px";
+    o.innerHTML="This lab session has ended.<br><span style='font-weight:400;font-size:14px;opacity:.8'>Relaunch it from the portal to keep practicing.</span>";
+    document.body.appendChild(o);
+  }
+  function tick(){
+    if(remaining==null) return;
+    var disp=Math.max(0, remaining - (((Date.now()-lastSync)/1000)|0));
+    paint(disp);
+    if(disp<=WARN && !warned && !closed) showModal();
+    var cd=document.getElementById("kx-cd"); if(cd) cd.textContent=fmt(disp);
+    if(disp<=0 && !closed){ closed=true; onClosed(); }
+  }
+  function start(){ sync(); setInterval(sync,60000); setInterval(tick,1000); }
+  if(document.readyState==="loading") document.addEventListener("DOMContentLoaded",start); else start();
+})();
+</script></body>
+</html>
