@@ -6,8 +6,8 @@ Writeups for **RIFT CTF 2026 — KageX AI × GeekHaven, IIIT Allahabad**, an AI/
 
 | Member | Solves |
 |---|---|
-| **Hrishikesh** | Atrium, Shelfmark, Paternoster, Lantern, Meridian, Gantry, Keystone |
-| **codeitishant** | Foundry, Cornice, Plinth, Oriel, Corbel |
+| **Hrishikesh** | Atrium, Shelfmark, Paternoster, Lantern, Meridian, Gantry, Keystone, Lintel, Observatory |
+| **codeitishant** | Foundry, Cornice, Plinth, Oriel, Corbel, Architrave |
 | **parthsujit07** | Ledger, Quoin, Spandrel |
 
 ## Challenges
@@ -29,8 +29,11 @@ Writeups for **RIFT CTF 2026 — KageX AI × GeekHaven, IIIT Allahabad**, an AI/
 | [Quoin](Quoin/quoin-writeup.md) | AI Security / Agent Logic Exploitation | parthsujit07 | `FLAG{f9dcd75835cce32e6e8f873de74ee804}` | [quoin-writeup.md](Quoin/quoin-writeup.md) |
 | [Spandrel](<Sprandrel/Spandrel WRITEUP.md>) | Web / AI Agent — Lexicographic Oracle Abuse | parthsujit07 | `FLAG{48fa2a53256f57fa866fa8ba590cb701}` | [Spandrel WRITEUP.md](<Sprandrel/Spandrel WRITEUP.md>) |
 | [Corbel](Corbel/writeup.md) | AI / Web — LLM Agent, Permit State Machine | codeitishant | `FLAG{f4bfc6b0053ea4a18e9e98a74601bca3}` | [writeup.md](Corbel/writeup.md) |
+| [Lintel](Lintel/writeup.md) | AI agent / Authorization bypass | Hrishikesh | `FLAG{2bf77e6ecfabf3b1904a10a355d9752f}` | [writeup.md](Lintel/writeup.md) |
+| [Observatory](Observatory/writeup.md) | AI / LLM agent security — Prompt injection / Tool-scoping bypass | Hrishikesh | `FLAG{787d915dbf368108711220497acb8e89}` | [writeup.md](Observatory/writeup.md) |
+| [Architrave](Architrave/architrave-writeup.md) | Web / Logic exploitation — Permit-to-work state machine | codeitishant | `FLAG{79812ec8cee21612df3e47096597df14}` | [architrave-writeup.md](Architrave/architrave-writeup.md) |
 
-**Total solved: 15 / 15 attempted**, score contributions above sum to **5977 pts**.
+**Total solved: 18 / 20 attempted** (2 unsolved), score contributions above sum to **5977 pts**.
 
 ## Recurring vulnerability patterns
 
